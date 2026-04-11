@@ -4,7 +4,8 @@ CDLL('libgtk4-layer-shell.so')
 import gi
 gi.require_version("Gtk", "4.0")
 gi.require_version("Gtk4LayerShell", "1.0")
-from gi.repository import Gtk, GLib, Gtk4LayerShell, Pango
+gi.require_version("PangoCairo", "1.0")
+from gi.repository import Gtk, GLib, Gtk4LayerShell, Pango, PangoCairo
 import calendar
 import datetime
 import json
@@ -12,6 +13,7 @@ import math
 import os
 import signal
 import subprocess
+import sys
 import threading
 import tomllib
 
@@ -126,11 +128,12 @@ def _run_sync():
                     })
 
         os.makedirs(os.path.dirname(CACHE_FILE), exist_ok=True)
-        with open(CACHE_FILE, 'w') as f:
+        tmp = CACHE_FILE + '.tmp'
+        with open(tmp, 'w') as f:
             json.dump(events_by_date, f)
+        os.replace(tmp, CACHE_FILE)
 
     except Exception as e:
-        import sys
         print(f'[gcal sync error] {e}', file=sys.stderr)
 
 
@@ -143,7 +146,6 @@ def load_theme():
         'foreground': '#ffcead',
         'background': '#060B1E',
         'accent': '#7d82d9',
-        'color1': '#f85525',
     }
     try:
         with open(THEME_FILE, 'rb') as f:
@@ -151,6 +153,10 @@ def load_theme():
             return {**defaults, **t}
     except Exception:
         return defaults
+
+def hex_to_rgb_float(hex_color):
+    h = hex_color.lstrip('#')
+    return int(h[0:2], 16)/255, int(h[2:4], 16)/255, int(h[4:6], 16)/255
 
 def hex_to_rgba(hex_color, alpha):
     h = hex_color.lstrip('#')
@@ -179,6 +185,7 @@ class CalendarPopup(Gtk.ApplicationWindow):
         self.selected_date = self.today
         self.events = load_events()
         self._selected_btn = None
+        self._refresh_fg = (1.0, 1.0, 1.0)
 
         self._setup_window()
         self._apply_css()
@@ -261,11 +268,14 @@ class CalendarPopup(Gtk.ApplicationWindow):
         next_btn = Gtk.Button(label="›")
         next_btn.connect("clicked", lambda _: self._navigate(1))
 
+        self._refresh_angle = 0.0
+        self._refresh_spin_timer = None
+        self._refresh_da = Gtk.DrawingArea()
+        self._refresh_da.set_size_request(20, 20)
+        self._refresh_da.set_draw_func(self._draw_refresh_icon)
+
         self.refresh_btn = Gtk.Button()
-        refresh_lbl = Gtk.Label(label="\uf021")
-        refresh_lbl.set_halign(Gtk.Align.CENTER)
-        refresh_lbl.set_valign(Gtk.Align.CENTER)
-        self.refresh_btn.set_child(refresh_lbl)
+        self.refresh_btn.set_child(self._refresh_da)
         self.refresh_btn.set_size_request(28, 28)
         self.refresh_btn.set_hexpand(False)
         self.refresh_btn.set_vexpand(False)
@@ -395,8 +405,6 @@ class CalendarPopup(Gtk.ApplicationWindow):
             btn.date = date
             btn.connect("clicked", self._on_day_clicked)
 
-            if day_events:
-                btn.add_css_class('has-events')
             if date.month != self.month:
                 btn.add_css_class("other-month")
             if date.weekday() >= 5:
@@ -438,7 +446,7 @@ class CalendarPopup(Gtk.ApplicationWindow):
 
         day_events = sorted(
             self.events.get(date.isoformat(), []),
-            key=lambda e: 0 if isinstance(e, dict) else 1
+            key=lambda e: 0 if (isinstance(e, dict) and not e.get('done')) else (1 if isinstance(e, dict) else 2)
         )
         if day_events:
             for ev in day_events:
@@ -491,6 +499,8 @@ class CalendarPopup(Gtk.ApplicationWindow):
         self._hide()
 
     def _on_task_toggle(self, btn, task):
+        btn.set_sensitive(False)
+        btn.add_css_class('pulsing')
         def do_toggle():
             try:
                 from googleapiclient.discovery import build
@@ -512,15 +522,58 @@ class CalendarPopup(Gtk.ApplicationWindow):
                     return False
                 GLib.idle_add(after)
             except Exception as e:
-                import sys
                 print(f'[task toggle error] {e}', file=sys.stderr)
+                def after_err():
+                    btn.remove_css_class('pulsing')
+                    btn.set_sensitive(True)
+                    return False
+                GLib.idle_add(after_err)
         threading.Thread(target=do_toggle, daemon=True).start()
+
+    def _draw_refresh_icon(self, da, ctx, width, height):
+        r, g, b = self._refresh_fg
+
+        if not hasattr(self, '_refresh_layout'):
+            self._refresh_layout = PangoCairo.create_layout(ctx)
+            font_name = NERD_FONT.split(',')[0].strip()
+            self._refresh_layout.set_font_description(
+                Pango.FontDescription.from_string(f"{font_name} 12"))
+            self._refresh_layout.set_text("\uf021")
+            ink, _ = self._refresh_layout.get_pixel_extents()
+            self._refresh_ink = ink
+        else:
+            PangoCairo.update_layout(ctx, self._refresh_layout)
+
+        ink = self._refresh_ink
+        x = (width - ink.width) / 2 - ink.x
+        y = (height - ink.height) / 2 - ink.y
+
+        if self._refresh_angle != 0.0:
+            ctx.translate(width / 2, height / 2)
+            ctx.rotate(self._refresh_angle)
+            ctx.translate(-width / 2, -height / 2)
+
+        ctx.set_source_rgba(r, g, b, 1.0)
+        ctx.move_to(x, y)
+        PangoCairo.show_layout(ctx, self._refresh_layout)
 
     def _on_refresh_clicked(self, _):
         self.refresh_btn.set_sensitive(False)
+
+        def tick():
+            self._refresh_angle += 0.15
+            self._refresh_da.queue_draw()
+            return not self.refresh_btn.get_sensitive()
+        self._refresh_spin_timer = GLib.timeout_add(16, tick)
+
         def do_sync():
             _run_sync()
             def after():
+                if self._refresh_spin_timer:
+                    GLib.source_remove(self._refresh_spin_timer)
+                    self._refresh_spin_timer = None
+                self._refresh_angle = 0.0
+                self._refresh_da.queue_draw()
                 self.events = load_events()
                 self._build_grid()
                 self._update_day_panel(self.selected_date)
@@ -548,6 +601,7 @@ class CalendarPopup(Gtk.ApplicationWindow):
         bg = t['background']
         accent = t['accent']
         red = '#ff5555'
+        self._refresh_fg = hex_to_rgb_float(fg)
 
         css = f"""
       window {{
@@ -696,16 +750,8 @@ class CalendarPopup(Gtk.ApplicationWindow):
           background: {hex_to_rgba(accent, 0.15)};
           border: 1px solid {hex_to_rgba(accent, 0.35)};
           color: {fg};
-          font-family: "{NERD_FONT}";
-          font-size: 13px;
+          font-size: 15px;
           padding: 0;
-      }}
-      .refresh-btn label {{
-          all: unset;
-          font-family: "{NERD_FONT}";
-          font-size: 13px;
-          color: {fg};
-          margin-left: -2px;
       }}
       .refresh-btn:hover {{
           background: {hex_to_rgba(accent, 0.28)};
@@ -721,6 +767,13 @@ class CalendarPopup(Gtk.ApplicationWindow):
           font-size: 13px;
           color: {fg};
           margin-left: -2px;
+      }}
+      @keyframes pulse {{
+          0%, 100% {{ opacity: 1; }}
+          50%       {{ opacity: 0.25; }}
+      }}
+      .pulsing {{
+          animation: pulse 0.6s ease-in-out infinite;
       }}
       """.encode()
         if not hasattr(self, '_css_provider'):

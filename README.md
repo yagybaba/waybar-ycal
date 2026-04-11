@@ -8,6 +8,40 @@ A Google Calendar + Google Tasks popup widget for [Waybar](https://github.com/Al
 - Auto-syncs every 15 minutes, manual refresh button available
 - Themed from your system colors (supports [Omarchy](https://github.com/basecamp/omarchy), falls back to built-in defaults)
 
+## Usage philosophy
+
+This widget treats **Google Tasks** and **Google Calendar events** as two distinct things:
+
+- **Tasks** (red indicator) — important deadlines only. Things that *must* happen by a specific date. The red color makes them stand out so you never miss them.
+- **Events** (accent color indicator) — everything else. Meetings, plans, reminders, anything time-based.
+
+The separation keeps the calendar clean: if you see red, it matters.
+
+## Installation
+
+### Arch Linux (AUR) — recommended
+
+```bash
+yay -S waybar-ycal-git
+```
+
+The package installs scripts to `/usr/share/waybar-ycal/` and registers the systemd user service. Updates automatically with `yay -Syu`.
+
+After installing, enable the daemon:
+```bash
+systemctl --user enable --now waybar-ycal.service
+```
+
+### Manual (other distros)
+
+```bash
+git clone https://github.com/yagybaba/waybar-ycal
+cd waybar-ycal
+./install.sh
+```
+
+---
+
 ## Requirements
 
 ### System packages
@@ -85,9 +119,9 @@ Add to your `config.jsonc`:
 }
 ```
 
-Add to your modules list where you want it:
+Add to your modules list where you want it (it includes a clock, so no need for a separate `clock` module):
 ```jsonc
-"modules-center": ["clock", "custom/ycal"]
+"modules-center": ["custom/ycal"]
 ```
 
 ### style.css (optional)
