@@ -1,6 +1,6 @@
 # Maintainer: yagybaba <https://github.com/yagybaba>
-pkgname=waybar-ycal-git
-pkgver=r1.0000000
+pkgname=waybar-ycal
+pkgver=1.0.0
 pkgrel=1
 pkgdesc="Google Calendar + Tasks popup widget for Waybar on Wayland"
 arch=('any')
@@ -15,19 +15,11 @@ depends=(
     'python-google-auth-oauthlib'
     'python-google-api-python-client'
 )
-makedepends=('git')
-provides=('waybar-ycal')
-conflicts=('waybar-ycal')
-source=("waybar-ycal::git+$url.git")
+source=("$pkgname-$pkgver.tar.gz::$url/archive/refs/tags/v$pkgver.tar.gz")
 sha256sums=('SKIP')
 
-pkgver() {
-    cd "waybar-ycal"
-    printf "r%s.%s" "$(git rev-list --count HEAD)" "$(git rev-parse --short HEAD)"
-}
-
 package() {
-    cd "waybar-ycal"
+    cd "waybar-ycal-$pkgver"
 
     # Scripts
     install -Dm755 popup.py "$pkgdir/usr/share/waybar-ycal/popup.py"
