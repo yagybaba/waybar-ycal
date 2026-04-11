@@ -8,12 +8,26 @@ echo "Installing waybar-ycal..."
 
 # Copy scripts to install dir
 mkdir -p "$INSTALL_DIR"
-cp popup.py bar.py toggle.sh sync.py "$INSTALL_DIR/"
-chmod +x "$INSTALL_DIR/popup.py" "$INSTALL_DIR/bar.py" "$INSTALL_DIR/toggle.sh" "$INSTALL_DIR/sync.py"
+cp popup.py bar.py toggle.sh "$INSTALL_DIR/"
+chmod +x "$INSTALL_DIR/popup.py" "$INSTALL_DIR/bar.py" "$INSTALL_DIR/toggle.sh"
 
 # Install systemd user service
 mkdir -p "$SERVICE_DIR"
-sed "s|%h|$HOME|g" waybar-ycal.service > "$SERVICE_DIR/waybar-ycal.service"
+cat > "$SERVICE_DIR/waybar-ycal.service" << EOF
+[Unit]
+Description=Waybar Google Calendar popup daemon
+After=graphical-session.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/python3 $INSTALL_DIR/popup.py
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=graphical-session.target
+EOF
+
 systemctl --user daemon-reload
 systemctl --user enable --now waybar-ycal.service
 
@@ -23,18 +37,14 @@ echo ""
 echo "1. Place your Google OAuth credentials at:"
 echo "     $INSTALL_DIR/credentials.json"
 echo ""
-echo "2. Authenticate (opens browser once):"
-echo "     python3 $INSTALL_DIR/sync.py"
-echo ""
-echo "3. Add to your Waybar config (config.jsonc):"
+echo "2. Add to your Waybar config (config.jsonc):"
 echo '     "custom/ycal": {'
-echo '       "exec": "~/.config/waybar-ycal/bar.py",'
-echo '       "on-click": "~/.config/waybar-ycal/toggle.sh",'
+echo '       "exec": "'"$INSTALL_DIR"'/bar.py",'
+echo '       "on-click": "'"$INSTALL_DIR"'/toggle.sh",'
 echo '       "interval": 60,'
 echo '       "return-type": "json"'
 echo '     }'
 echo ""
-echo "4. Add to your Waybar style.css:"
-echo '     #custom-ycal { letter-spacing: 0.5px; }'
+echo "3. Open the popup — it will guide you through authentication."
 echo ""
 echo "See README.md for full setup instructions."

@@ -88,28 +88,27 @@ You need OAuth2 credentials from Google Cloud. This is a one-time setup.
    ~/.config/waybar-ycal/credentials.json
    ```
 
-## Installation
+   You can create `~/.config/waybar-ycal/` manually or let the popup create it for you (see First-time setup below).
 
-```bash
-git clone https://github.com/yourname/waybar-ycal
-cd waybar-ycal
-./install.sh
-```
+## First-time setup
 
-The installer copies scripts, installs a systemd user service, and starts the daemon.
-
-### First-time auth
-
-After placing `credentials.json`, run:
-```bash
-python3 ~/.config/waybar-ycal/sync.py
-```
-
-A browser window will open — log in and allow access. The token is saved to `~/.cache/waybar-ycal/token.json` and refreshed automatically after that.
+Open the popup by clicking the bar module. If `credentials.json` is missing, the popup will guide you through placing it and offer to create the config folder. Once the file is in place, it will show a **Connect Google Account** screen — click **Authenticate**, log in through the browser, and the popup fetches your calendars and tasks automatically. The token is saved to `~/.cache/waybar-ycal/token.json` and refreshed automatically after that.
 
 ## Waybar config
 
 Add to your `config.jsonc`:
+
+**AUR install:**
+```jsonc
+"custom/ycal": {
+    "exec": "/usr/share/waybar-ycal/bar.py",
+    "on-click": "/usr/share/waybar-ycal/toggle.sh",
+    "interval": 60,
+    "return-type": "json"
+}
+```
+
+**Manual install:**
 ```jsonc
 "custom/ycal": {
     "exec": "~/.config/waybar-ycal/bar.py",
@@ -151,7 +150,6 @@ Task indicators are always red (`#ff5555`) and completed task dots are green (`#
 |------|------|
 | `popup.py` | GTK4 daemon — renders the popup, handles Google API calls |
 | `bar.py` | Waybar module — prints JSON with icon + date |
-| `sync.py` | Standalone auth/sync script — use for initial login |
 | `toggle.sh` | Sends SIGUSR1 to daemon to show/hide popup |
 | `waybar-ycal.service` | Systemd user service to keep daemon running |
 

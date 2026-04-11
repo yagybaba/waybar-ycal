@@ -216,18 +216,124 @@ class CalendarPopup(Gtk.ApplicationWindow):
             self._show()
 
     def _show(self):
+        self._apply_css()
+        if not os.path.exists(CREDENTIALS_FILE):
+            self._show_setup_screen('no_credentials')
+            self.present()
+            return
+        if not os.path.exists(TOKEN_FILE):
+            self._show_setup_screen('no_token')
+            self.present()
+            return
         self.today = datetime.date.today()
         self.year = self.today.year
         self.month = self.today.month
         self.selected_date = self.today
         self.events = load_events()
-        self._apply_css()
+        self._show_calendar()
+        self.present()
+
+    def _show_calendar(self):
+        self.main_box.set_visible(True)
+        if hasattr(self, '_setup_box') and self._setup_box.get_parent():
+            self.get_child().remove(self._setup_box)
         self._build_grid()
         self.month_label.set_markup(
             f"<b>{datetime.date(self.year, self.month, 1).strftime('%B %Y').upper()}</b>"
         )
         self._update_day_panel(self.today)
-        self.present()
+
+    def _show_setup_screen(self, state):
+        self.main_box.set_visible(False)
+
+        if hasattr(self, '_cred_poll_timer'):
+            GLib.source_remove(self._cred_poll_timer)
+            self._cred_poll_timer = None
+
+        if hasattr(self, '_setup_box') and self._setup_box.get_parent():
+            self.get_child().remove(self._setup_box)
+
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
+        box.add_css_class('popup-bg')
+        box.set_size_request(320, -1)
+
+        if state == 'no_credentials':
+            icon = Gtk.Label(label="")
+            icon.add_css_class('setup-icon')
+            title = Gtk.Label(label="Connect Google Calendar")
+            title.add_css_class('setup-title')
+            msg = Gtk.Label(label=f"Download OAuth credentials from Google Cloud\nand place at:\n{CREDENTIALS_FILE}\n\nWaiting for file...")
+            msg.add_css_class('setup-msg')
+            msg.set_justify(Gtk.Justification.CENTER)
+            open_btn = Gtk.Button(label="Open Google Cloud Console")
+            open_btn.add_css_class('add-btn')
+            open_btn.connect("clicked", self._on_open_console_clicked)
+            box.append(icon)
+            box.append(title)
+            box.append(msg)
+            box.append(open_btn)
+
+            def poll_for_credentials():
+                if os.path.exists(CREDENTIALS_FILE):
+                    self._cred_poll_timer = None
+                    self._show_setup_screen('no_token')
+                    return False
+                return True
+            self._cred_poll_timer = GLib.timeout_add(2000, poll_for_credentials)
+
+        elif state == 'no_token':
+            icon = Gtk.Label(label="")
+            icon.add_css_class('setup-icon')
+            title = Gtk.Label(label="Connect Google Account")
+            title.add_css_class('setup-title')
+            msg = Gtk.Label(label="Click below to open a browser and\nauthenticate with Google.")
+            msg.add_css_class('setup-msg')
+            msg.set_justify(Gtk.Justification.CENTER)
+            auth_btn = Gtk.Button(label="Authenticate")
+            auth_btn.add_css_class('add-btn')
+            auth_btn.connect("clicked", self._on_auth_clicked)
+            box.append(icon)
+            box.append(title)
+            box.append(msg)
+            box.append(auth_btn)
+
+        outer = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
+        outer.set_halign(Gtk.Align.CENTER)
+        outer.set_valign(Gtk.Align.CENTER)
+        outer.append(box)
+        self._setup_box = outer
+        self.set_child(outer)
+
+    def _on_open_console_clicked(self, btn):
+        os.makedirs(os.path.dirname(CREDENTIALS_FILE), exist_ok=True)
+        btn.set_sensitive(False)
+        btn.set_label("Opened — place credentials.json and wait...")
+        subprocess.Popen(['xdg-open', 'https://console.cloud.google.com/apis/credentials'])
+
+    def _on_auth_clicked(self, btn):
+        btn.set_sensitive(False)
+        btn.set_label("Opening browser...")
+        def do_auth():
+            try:
+                _get_credentials()
+                _run_sync()
+                def after():
+                    self.today = datetime.date.today()
+                    self.year = self.today.year
+                    self.month = self.today.month
+                    self.selected_date = self.today
+                    self.events = load_events()
+                    self.set_child(self.main_box)
+                    self._show_calendar()
+                    return False
+                GLib.idle_add(after)
+            except Exception as e:
+                def after_err():
+                    btn.set_label("Failed — try again")
+                    btn.set_sensitive(True)
+                    return False
+                GLib.idle_add(after_err)
+        threading.Thread(target=do_auth, daemon=True).start()
 
     def _on_active_changed(self, win, _):
         if win.is_active():
@@ -240,6 +346,9 @@ class CalendarPopup(Gtk.ApplicationWindow):
 
     def _hide(self):
         self._hide_timer = None
+        if hasattr(self, '_cred_poll_timer') and self._cred_poll_timer:
+            GLib.source_remove(self._cred_poll_timer)
+            self._cred_poll_timer = None
         self.set_visible(False)
         return False
 
@@ -774,6 +883,23 @@ class CalendarPopup(Gtk.ApplicationWindow):
       }}
       .pulsing {{
           animation: pulse 0.6s ease-in-out infinite;
+      }}
+      .setup-icon {{
+          font-family: "{NERD_FONT}";
+          font-size: 36px;
+          color: {hex_to_rgba(accent, 0.8)};
+          margin-bottom: 8px;
+      }}
+      .setup-title {{
+          font-size: 14px;
+          font-weight: bold;
+          color: {fg};
+          margin-bottom: 6px;
+      }}
+      .setup-msg {{
+          font-size: 11px;
+          color: {hex_to_rgba(fg, 0.6)};
+          margin-bottom: 12px;
       }}
       """.encode()
         if not hasattr(self, '_css_provider'):
