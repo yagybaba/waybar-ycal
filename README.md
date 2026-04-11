@@ -26,7 +26,7 @@ The separation keeps the calendar clean: if you see red, it matters.
 Dependencies are handled automatically.
 
 ```bash
-yay -S waybar-ycal-git
+yay -S waybar-ycal
 systemctl --user enable --now waybar-ycal.service
 ```
 
