@@ -1,6 +1,9 @@
 #!/bin/bash
 set -e
 
+# Run from the repo directory regardless of where the script is called from
+cd "$(dirname "$0")"
+
 INSTALL_DIR="$HOME/.config/waybar-ycal"
 SERVICE_DIR="$HOME/.config/systemd/user"
 
