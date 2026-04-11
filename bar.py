@@ -14,17 +14,10 @@ def load_events():
             pass
     return {}
 
-def event_label(ev):
-    if isinstance(ev, dict):
-        prefix = '✓' if ev.get('done') else '◆'
-        return f"{prefix} {ev['title']}"
-    return ev
-
 now = datetime.datetime.now()
 today = now.date()
 events = load_events()
 today_events = events.get(today.isoformat(), [])
-labels = [event_label(e) for e in today_events]
 
 output = {
     "text": f"\U000f00ed  {now.strftime('%A %H:%M')}",

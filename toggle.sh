@@ -9,5 +9,9 @@ if [ -f "$PID_FILE" ]; then
     fi
 fi
 
-# Not running — start the daemon in background
-/usr/bin/python3 ~/.config/waybar-ycal/popup.py &
+# Not running — restart via systemd if enabled, else launch directly
+if systemctl --user is-enabled waybar-ycal.service &>/dev/null; then
+    systemctl --user start waybar-ycal.service
+else
+    /usr/bin/python3 "$HOME/.config/waybar-ycal/popup.py" &
+fi

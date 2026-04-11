@@ -18,12 +18,23 @@ systemctl --user daemon-reload
 systemctl --user enable --now waybar-ycal.service
 
 echo ""
-echo "Done. Add this to your Waybar config:"
+echo "Done! Next steps:"
 echo ""
-echo '  "custom/gcal": {'
-echo '    "exec": "~/.config/waybar-ycal/bar.py",'
-echo '    "on-click": "~/.config/waybar-ycal/toggle.sh",'
-echo '    "interval": 60,'
-echo '    "return-type": "json",'
-echo '    "tooltip": true'
-echo '  }'
+echo "1. Place your Google OAuth credentials at:"
+echo "     $INSTALL_DIR/credentials.json"
+echo ""
+echo "2. Authenticate (opens browser once):"
+echo "     python3 $INSTALL_DIR/sync.py"
+echo ""
+echo "3. Add to your Waybar config (config.jsonc):"
+echo '     "custom/ycal": {'
+echo '       "exec": "~/.config/waybar-ycal/bar.py",'
+echo '       "on-click": "~/.config/waybar-ycal/toggle.sh",'
+echo '       "interval": 60,'
+echo '       "return-type": "json"'
+echo '     }'
+echo ""
+echo "4. Add to your Waybar style.css:"
+echo '     #custom-ycal { letter-spacing: 0.5px; }'
+echo ""
+echo "See README.md for full setup instructions."

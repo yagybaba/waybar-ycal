@@ -4,7 +4,7 @@ CDLL('libgtk4-layer-shell.so')
 import gi
 gi.require_version("Gtk", "4.0")
 gi.require_version("Gtk4LayerShell", "1.0")
-from gi.repository import Gtk, GLib, Gtk4LayerShell
+from gi.repository import Gtk, GLib, Gtk4LayerShell, Pango
 import calendar
 import datetime
 import json
@@ -22,34 +22,45 @@ CREDENTIALS_FILE = os.path.expanduser('~/.config/waybar-ycal/credentials.json')
 TOKEN_FILE = os.path.expanduser('~/.cache/waybar-ycal/token.json')
 SYNC_INTERVAL_SEC = 15 * 60  # 15 minutes
 
+# Nerd Font family used for icon buttons (refresh + edit).
+# Change this to match whichever Nerd Font you have installed.
+NERD_FONT = "JetBrainsMonoNL Nerd Font, JetBrainsMono Nerd Font, Symbols Nerd Font"
+SCOPES = [
+    'https://www.googleapis.com/auth/calendar.readonly',
+    'https://www.googleapis.com/auth/tasks',
+]
+
+
+def _get_credentials():
+    from google.auth.transport.requests import Request
+    from google.oauth2.credentials import Credentials
+    from google_auth_oauthlib.flow import InstalledAppFlow
+
+    creds = None
+    if os.path.exists(TOKEN_FILE):
+        creds = Credentials.from_authorized_user_file(TOKEN_FILE, SCOPES)
+    if not creds or not creds.valid:
+        if creds and creds.expired and creds.refresh_token:
+            creds.refresh(Request())
+        else:
+            if not os.path.exists(CREDENTIALS_FILE):
+                return None
+            flow = InstalledAppFlow.from_client_secrets_file(CREDENTIALS_FILE, SCOPES)
+            creds = flow.run_local_server(port=0)
+        os.makedirs(os.path.dirname(TOKEN_FILE), exist_ok=True)
+        with open(TOKEN_FILE, 'w') as f:
+            f.write(creds.to_json())
+    return creds
+
 
 def _run_sync():
     """Fetch events from Google Calendar and write to cache. Runs in a thread."""
     try:
-        from google.auth.transport.requests import Request
-        from google.oauth2.credentials import Credentials
-        from google_auth_oauthlib.flow import InstalledAppFlow
         from googleapiclient.discovery import build
 
-        SCOPES = [
-            'https://www.googleapis.com/auth/calendar.readonly',
-            'https://www.googleapis.com/auth/tasks',
-        ]
-
-        creds = None
-        if os.path.exists(TOKEN_FILE):
-            creds = Credentials.from_authorized_user_file(TOKEN_FILE, SCOPES)
-        if not creds or not creds.valid:
-            if creds and creds.expired and creds.refresh_token:
-                creds.refresh(Request())
-            else:
-                if not os.path.exists(CREDENTIALS_FILE):
-                    return  # No credentials, skip silently
-                flow = InstalledAppFlow.from_client_secrets_file(CREDENTIALS_FILE, SCOPES)
-                creds = flow.run_local_server(port=0)
-            os.makedirs(os.path.dirname(TOKEN_FILE), exist_ok=True)
-            with open(TOKEN_FILE, 'w') as f:
-                f.write(creds.to_json())
+        creds = _get_credentials()
+        if creds is None:
+            return
 
         service = build('calendar', 'v3', credentials=creds)
         today = datetime.date.today()
@@ -167,6 +178,7 @@ class CalendarPopup(Gtk.ApplicationWindow):
         self.month = self.today.month
         self.selected_date = self.today
         self.events = load_events()
+        self._selected_btn = None
 
         self._setup_window()
         self._apply_css()
@@ -236,6 +248,7 @@ class CalendarPopup(Gtk.ApplicationWindow):
         self.main_box.append(self.left_box)
 
         header = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=0)
+        header.set_size_request(-1, 32)
         prev_btn = Gtk.Button(label="‹")
         prev_btn.connect("clicked", lambda _: self._navigate(-1))
 
@@ -297,6 +310,7 @@ class CalendarPopup(Gtk.ApplicationWindow):
 
         # Buttons at the bottom
         btn_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+        btn_row.set_size_request(-1, 32)
         add_btn = Gtk.Button(label="+ Add event")
         add_btn.add_css_class('add-btn')
         add_btn.set_hexpand(True)
@@ -306,10 +320,8 @@ class CalendarPopup(Gtk.ApplicationWindow):
         edit_lbl.set_halign(Gtk.Align.CENTER)
         edit_lbl.set_valign(Gtk.Align.CENTER)
         edit_btn.set_child(edit_lbl)
-        edit_btn.set_size_request(28, 28)
+        edit_btn.set_size_request(36, -1)
         edit_btn.set_hexpand(False)
-        edit_btn.set_vexpand(False)
-        edit_btn.set_valign(Gtk.Align.CENTER)
         edit_btn.add_css_class('add-btn')
         edit_btn.add_css_class('nerd')
         edit_btn.connect("clicked", self._on_edit_clicked)
@@ -322,6 +334,7 @@ class CalendarPopup(Gtk.ApplicationWindow):
     def _build_grid(self):
         if self.grid is not None:
             self.left_box.remove(self.grid)
+        self._selected_btn = None
 
         self.grid = Gtk.Grid()
         self.grid.set_row_spacing(4)
@@ -392,6 +405,7 @@ class CalendarPopup(Gtk.ApplicationWindow):
                 btn.add_css_class("today")
             if date == self.selected_date:
                 btn.add_css_class("selected")
+                self._selected_btn = btn
 
             row = i // 7 + 1
             col = i % 7
@@ -400,10 +414,12 @@ class CalendarPopup(Gtk.ApplicationWindow):
         self.left_box.append(self.grid)
 
     def _on_day_clicked(self, btn):
+        if self._selected_btn is not None:
+            self._selected_btn.remove_css_class('selected')
+        self._selected_btn = btn
+        btn.add_css_class('selected')
         self.selected_date = btn.date
         self._update_day_panel(btn.date)
-        # Rebuild grid to update selected highlight
-        self._build_grid()
 
     def _update_day_panel(self, date):
         # Update heading
@@ -434,7 +450,7 @@ class CalendarPopup(Gtk.ApplicationWindow):
                     name = Gtk.Label(label=ev['title'])
                     name.set_halign(Gtk.Align.START)
                     name.set_hexpand(True)
-                    name.set_ellipsize(3)
+                    name.set_ellipsize(Pango.EllipsizeMode.END)
                     name.set_tooltip_text(ev['title'])
                     name.add_css_class('event-name')
                     toggle = Gtk.Button(label="✓")
@@ -449,7 +465,7 @@ class CalendarPopup(Gtk.ApplicationWindow):
                     dot.add_css_class('event-dot')
                     name = Gtk.Label(label=ev)
                     name.set_halign(Gtk.Align.START)
-                    name.set_ellipsize(3)
+                    name.set_ellipsize(Pango.EllipsizeMode.END)
                     name.set_tooltip_text(ev)
                     name.add_css_class('event-name')
                     row.append(dot)
@@ -477,13 +493,10 @@ class CalendarPopup(Gtk.ApplicationWindow):
     def _on_task_toggle(self, btn, task):
         def do_toggle():
             try:
-                from google.oauth2.credentials import Credentials
                 from googleapiclient.discovery import build
-                SCOPES = [
-                    'https://www.googleapis.com/auth/calendar.readonly',
-                    'https://www.googleapis.com/auth/tasks',
-                ]
-                creds = Credentials.from_authorized_user_file(TOKEN_FILE, SCOPES)
+                creds = _get_credentials()
+                if creds is None:
+                    return
                 service = build('tasks', 'v1', credentials=creds)
                 new_status = 'needsAction' if task.get('done') else 'completed'
                 service.tasks().patch(
@@ -683,29 +696,31 @@ class CalendarPopup(Gtk.ApplicationWindow):
           background: {hex_to_rgba(accent, 0.15)};
           border: 1px solid {hex_to_rgba(accent, 0.35)};
           color: {fg};
-          font-family: "JetBrainsMonoNL Nerd Font";
+          font-family: "{NERD_FONT}";
           font-size: 13px;
           padding: 0;
       }}
       .refresh-btn label {{
           all: unset;
-          font-family: "JetBrainsMonoNL Nerd Font";
+          font-family: "{NERD_FONT}";
           font-size: 13px;
           color: {fg};
+          margin-left: -2px;
       }}
       .refresh-btn:hover {{
           background: {hex_to_rgba(accent, 0.28)};
       }}
       .add-btn.nerd {{
-          font-family: "JetBrainsMonoNL Nerd Font";
+          font-family: "{NERD_FONT}";
           font-size: 13px;
           padding: 0;
       }}
       .add-btn.nerd label {{
           all: unset;
-          font-family: "JetBrainsMonoNL Nerd Font";
+          font-family: "{NERD_FONT}";
           font-size: 13px;
           color: {fg};
+          margin-left: -2px;
       }}
       """.encode()
         if not hasattr(self, '_css_provider'):
@@ -730,7 +745,7 @@ def on_activate(app):
     GLib.timeout_add_seconds(SYNC_INTERVAL_SEC, sync_in_background)
 
 
-app = Gtk.Application(application_id="com.waybar.gcal")
+app = Gtk.Application(application_id="com.waybar.ycal")
 app.connect("activate", on_activate)
 
 try:
