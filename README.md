@@ -17,22 +17,35 @@ This widget treats **Google Tasks** and **Google Calendar events** as two distin
 
 The separation keeps the calendar clean: if you see red, it matters.
 
+---
+
 ## Installation
 
 ### Arch Linux (AUR) — recommended
 
+Dependencies are handled automatically.
+
 ```bash
 yay -S waybar-ycal-git
-```
-
-The package installs scripts to `/usr/share/waybar-ycal/` and registers the systemd user service. Updates automatically with `yay -Syu`.
-
-After installing, enable the daemon:
-```bash
 systemctl --user enable --now waybar-ycal.service
 ```
 
+Updates automatically with `yay -Syu`.
+
 ### Manual (other distros)
+
+**1. Install dependencies**
+
+**Ubuntu/Debian:**
+```bash
+sudo apt install python3-gi python3-gi-cairo gir1.2-gtk-4.0 \
+    python3-google-auth python3-google-auth-oauthlib
+pip install --user google-api-python-client
+```
+
+> **gtk4-layer-shell** is required and may need to be built from source on Ubuntu. See [gtk4-layer-shell](https://github.com/wmww/gtk4-layer-shell).
+
+**2. Clone and install**
 
 ```bash
 git clone https://github.com/yagybaba/waybar-ycal
@@ -40,33 +53,9 @@ cd waybar-ycal
 ./install.sh
 ```
 
+The installer copies scripts to `~/.config/waybar-ycal/`, installs a systemd user service, and starts the daemon.
+
 ---
-
-## Requirements
-
-### System packages
-
-**Arch Linux:**
-```bash
-sudo pacman -S python-gobject gtk4 gtk4-layer-shell python-google-auth python-google-auth-oauthlib
-yay -S python-google-api-python-client  # or paru
-```
-
-**Ubuntu/Debian:**
-```bash
-sudo apt install python3-gi python3-gi-cairo gir1.2-gtk-4.0 \
-    python3-google-auth python3-google-auth-oauthlib
-pip install --user google-api-python-client gtk4-layer-shell
-```
-
-> **gtk4-layer-shell** is required. On Ubuntu it may need to be built from source or installed via pip.
-
-### Nerd Font
-
-The refresh (``) and edit (``) icons require a [Nerd Font](https://www.nerdfonts.com/).
-Any Nerd Font works — just update `NERD_FONT` at the top of `popup.py` to match your font name.
-
-The bar module uses the `󰃭` icon (Nerd Font codepoint `U+F00ED`).
 
 ## Google Cloud setup
 
@@ -74,25 +63,19 @@ You need OAuth2 credentials from Google Cloud. This is a one-time setup.
 
 1. Go to [Google Cloud Console](https://console.cloud.google.com/)
 2. Create a new project (or use an existing one)
-3. **Enable APIs:** search and enable both:
+3. **Enable APIs** — search and enable both:
    - Google Calendar API
    - Google Tasks API
-4. Go to **APIs & Services → OAuth consent screen**
-   - Choose **External**, fill in app name (e.g. `waybar-ycal`)
-   - Under **Test users**, add your Google account email
-5. Go to **APIs & Services → Credentials → Create Credentials → OAuth client ID**
+4. Go to **APIs & Services → Credentials → Create Credentials → OAuth client ID**
    - Application type: **Desktop app**
-   - Download the JSON file
+   - After creating, go to the **Audience** tab (left sidebar) and add your Google account email under **Test users**
+   - **Download the JSON from the confirmation dialog** — this is only available at creation time
 6. Place the downloaded file at:
    ```
    ~/.config/waybar-ycal/credentials.json
    ```
 
-   You can create `~/.config/waybar-ycal/` manually or let the popup create it for you (see First-time setup below).
-
-## First-time setup
-
-Open the popup by clicking the bar module. If `credentials.json` is missing, the popup will guide you through placing it and offer to create the config folder. Once the file is in place, it will show a **Connect Google Account** screen — click **Authenticate**, log in through the browser, and the popup fetches your calendars and tasks automatically. The token is saved to `~/.cache/waybar-ycal/token.json` and refreshed automatically after that.
+---
 
 ## Waybar config
 
@@ -118,7 +101,7 @@ Add to your `config.jsonc`:
 }
 ```
 
-Add to your modules list where you want it (it includes a clock, so no need for a separate `clock` module):
+Add to your modules list (includes a clock, no need for a separate `clock` module):
 ```jsonc
 "modules-center": ["custom/ycal"]
 ```
@@ -131,7 +114,20 @@ Add to your modules list where you want it (it includes a clock, so no need for 
 }
 ```
 
-The popup window is self-styled and does not depend on Waybar's CSS.
+The popup is self-styled and does not depend on Waybar's CSS.
+
+---
+
+## First-time authentication
+
+Click the bar module to open the popup. It will detect that `credentials.json` is missing or that you haven't authenticated yet, and guide you through the process:
+
+1. **No credentials** — click **Open Google Cloud Console**, download and place the JSON file. The popup detects the file automatically and advances.
+2. **Not authenticated** — click **Authenticate**, log in through the browser. The popup fetches your calendars and tasks and opens automatically.
+
+The token is saved to `~/.cache/waybar-ycal/token.json` and refreshed silently when it expires.
+
+---
 
 ## Theming
 
@@ -144,6 +140,15 @@ Expected keys: `foreground`, `background`, `accent`. Falls back to built-in dark
 
 Task indicators are always red (`#ff5555`) and completed task dots are green (`#50fa7b`) — hardcoded by design to stay visible across themes.
 
+### Nerd Font
+
+The refresh and edit icons require a [Nerd Font](https://www.nerdfonts.com/).
+Any Nerd Font works — update `NERD_FONT` at the top of `popup.py` to match your font name.
+
+The bar module uses the `󰃭` icon (Nerd Font codepoint `U+F00ED`).
+
+---
+
 ## How it works
 
 | File | Role |
@@ -151,6 +156,5 @@ Task indicators are always red (`#ff5555`) and completed task dots are green (`#
 | `popup.py` | GTK4 daemon — renders the popup, handles Google API calls |
 | `bar.py` | Waybar module — prints JSON with icon + date |
 | `toggle.sh` | Sends SIGUSR1 to daemon to show/hide popup |
-| `waybar-ycal.service` | Systemd user service to keep daemon running |
 
 The daemon syncs on startup, then every 15 minutes. Click the refresh button in the popup header for an immediate sync.

@@ -60,6 +60,10 @@ def _run_sync():
     try:
         from googleapiclient.discovery import build
 
+        # Don't attempt sync if not authenticated — avoids opening browser on startup
+        if not os.path.exists(TOKEN_FILE):
+            return
+
         creds = _get_credentials()
         if creds is None:
             return
@@ -91,14 +95,18 @@ def _run_sync():
                 end = item['end']
                 title = item.get('summary', '(no title)')
                 if 'dateTime' in start:
+                    # Timed event: show on start date with time range
                     dt = datetime.datetime.fromisoformat(start['dateTime'])
                     dt_end = datetime.datetime.fromisoformat(end['dateTime'])
                     label = f"{title} {dt.strftime('%H:%M')}-{dt_end.strftime('%H:%M')}"
-                    date_key = dt.date().isoformat()
+                    events_by_date.setdefault(dt.date().isoformat(), []).append(label)
                 else:
-                    label = title
-                    date_key = start['date']
-                events_by_date.setdefault(date_key, []).append(label)
+                    # All-day event: Google end date is exclusive, so expand across all days
+                    d = datetime.date.fromisoformat(start['date'])
+                    d_end = datetime.date.fromisoformat(end['date'])
+                    while d < d_end:
+                        events_by_date.setdefault(d.isoformat(), []).append(title)
+                        d += datetime.timedelta(days=1)
 
         # Fetch Google Tasks with due dates
         tasks_service = build('tasks', 'v1', credentials=creds)
@@ -185,10 +193,10 @@ class CalendarPopup(Gtk.ApplicationWindow):
         self.selected_date = self.today
         self.events = load_events()
         self._selected_btn = None
-        self._refresh_fg = (1.0, 1.0, 1.0)
+        self._cred_poll_timer = None
 
         self._setup_window()
-        self._apply_css()
+        self._apply_css()  # sets self._refresh_fg
         self._build_ui()
 
     def _setup_window(self):
@@ -225,54 +233,68 @@ class CalendarPopup(Gtk.ApplicationWindow):
             self._show_setup_screen('no_token')
             self.present()
             return
+        self._reset_to_today()
+        self._show_calendar()
+        self.present()
+
+    def _reset_to_today(self):
+        """Reset calendar state to today and reload events from cache."""
         self.today = datetime.date.today()
         self.year = self.today.year
         self.month = self.today.month
         self.selected_date = self.today
         self.events = load_events()
-        self._show_calendar()
-        self.present()
 
     def _show_calendar(self):
-        self.main_box.set_visible(True)
-        if hasattr(self, '_setup_box') and self._setup_box.get_parent():
-            self.get_child().remove(self._setup_box)
+        """Switch from setup screen (or initial state) to the calendar view."""
+        self.set_child(self.main_box)
         self._build_grid()
         self.month_label.set_markup(
             f"<b>{datetime.date(self.year, self.month, 1).strftime('%B %Y').upper()}</b>"
         )
         self._update_day_panel(self.today)
 
-    def _show_setup_screen(self, state):
-        self.main_box.set_visible(False)
+    def _make_setup_card(self, title_text, msg_text):
+        """Build the shared card widget used by both setup screens."""
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
+        box.add_css_class('popup-bg')
+        box.set_size_request(360, -1)
+        box.set_halign(Gtk.Align.CENTER)
+        box.set_valign(Gtk.Align.CENTER)
 
-        if hasattr(self, '_cred_poll_timer'):
+        title = Gtk.Label(label=title_text)
+        title.add_css_class('setup-title')
+
+        msg = Gtk.Label(label=msg_text)
+        msg.add_css_class('setup-msg')
+        msg.set_justify(Gtk.Justification.CENTER)
+
+        box.append(title)
+        box.append(msg)
+        return box
+
+    def _show_setup_screen(self, state):
+        """Show the appropriate setup screen and replace the window child."""
+        # Force window to shrink-wrap to new content size
+        self.set_default_size(-1, -1)
+
+        # Cancel any running credentials poll
+        if self._cred_poll_timer is not None:
             GLib.source_remove(self._cred_poll_timer)
             self._cred_poll_timer = None
 
-        if hasattr(self, '_setup_box') and self._setup_box.get_parent():
-            self.get_child().remove(self._setup_box)
-
-        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
-        box.add_css_class('popup-bg')
-        box.set_size_request(320, -1)
-
         if state == 'no_credentials':
-            icon = Gtk.Label(label="")
-            icon.add_css_class('setup-icon')
-            title = Gtk.Label(label="Connect Google Calendar")
-            title.add_css_class('setup-title')
-            msg = Gtk.Label(label=f"Download OAuth credentials from Google Cloud\nand place at:\n{CREDENTIALS_FILE}\n\nWaiting for file...")
-            msg.add_css_class('setup-msg')
-            msg.set_justify(Gtk.Justification.CENTER)
+            short_path = CREDENTIALS_FILE.replace(os.path.expanduser('~'), '~')
+            box = self._make_setup_card(
+                "Connect Google Calendar",
+                f"Place your OAuth credentials at:\n{short_path}\n\nWaiting for file...",
+            )
             open_btn = Gtk.Button(label="Open Google Cloud Console")
             open_btn.add_css_class('add-btn')
             open_btn.connect("clicked", self._on_open_console_clicked)
-            box.append(icon)
-            box.append(title)
-            box.append(msg)
             box.append(open_btn)
 
+            # Poll every 2s — auto-advance when credentials.json appears
             def poll_for_credentials():
                 if os.path.exists(CREDENTIALS_FILE):
                     self._cred_poll_timer = None
@@ -282,27 +304,17 @@ class CalendarPopup(Gtk.ApplicationWindow):
             self._cred_poll_timer = GLib.timeout_add(2000, poll_for_credentials)
 
         elif state == 'no_token':
-            icon = Gtk.Label(label="")
-            icon.add_css_class('setup-icon')
-            title = Gtk.Label(label="Connect Google Account")
-            title.add_css_class('setup-title')
-            msg = Gtk.Label(label="Click below to open a browser and\nauthenticate with Google.")
-            msg.add_css_class('setup-msg')
-            msg.set_justify(Gtk.Justification.CENTER)
+            box = self._make_setup_card(
+                "Connect Google Account",
+                "Click below to open a browser and\nauthenticate with Google.",
+            )
             auth_btn = Gtk.Button(label="Authenticate")
             auth_btn.add_css_class('add-btn')
             auth_btn.connect("clicked", self._on_auth_clicked)
-            box.append(icon)
-            box.append(title)
-            box.append(msg)
             box.append(auth_btn)
 
-        outer = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
-        outer.set_halign(Gtk.Align.CENTER)
-        outer.set_valign(Gtk.Align.CENTER)
-        outer.append(box)
-        self._setup_box = outer
-        self.set_child(outer)
+        self._setup_box = box
+        self.set_child(box)
 
     def _on_open_console_clicked(self, btn):
         os.makedirs(os.path.dirname(CREDENTIALS_FILE), exist_ok=True)
@@ -318,12 +330,7 @@ class CalendarPopup(Gtk.ApplicationWindow):
                 _get_credentials()
                 _run_sync()
                 def after():
-                    self.today = datetime.date.today()
-                    self.year = self.today.year
-                    self.month = self.today.month
-                    self.selected_date = self.today
-                    self.events = load_events()
-                    self.set_child(self.main_box)
+                    self._reset_to_today()
                     self._show_calendar()
                     return False
                 GLib.idle_add(after)
@@ -346,7 +353,7 @@ class CalendarPopup(Gtk.ApplicationWindow):
 
     def _hide(self):
         self._hide_timer = None
-        if hasattr(self, '_cred_poll_timer') and self._cred_poll_timer:
+        if self._cred_poll_timer is not None:
             GLib.source_remove(self._cred_poll_timer)
             self._cred_poll_timer = None
         self.set_visible(False)
@@ -386,8 +393,6 @@ class CalendarPopup(Gtk.ApplicationWindow):
         self.refresh_btn = Gtk.Button()
         self.refresh_btn.set_child(self._refresh_da)
         self.refresh_btn.set_size_request(28, 28)
-        self.refresh_btn.set_hexpand(False)
-        self.refresh_btn.set_vexpand(False)
         self.refresh_btn.set_valign(Gtk.Align.CENTER)
         self.refresh_btn.add_css_class('refresh-btn')
         self.refresh_btn.connect("clicked", self._on_refresh_clicked)
@@ -538,6 +543,40 @@ class CalendarPopup(Gtk.ApplicationWindow):
         self.selected_date = btn.date
         self._update_day_panel(btn.date)
 
+    def _make_event_row(self, ev):
+        """Build a single event or task row for the day panel."""
+        row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+
+        if isinstance(ev, dict):
+            # Task row: colored dot, title, done toggle button
+            done = ev.get('done', False)
+            dot = Gtk.Label(label="•")
+            dot.add_css_class('done-dot' if done else 'task-dot')
+            name = Gtk.Label(label=ev['title'])
+            name.set_hexpand(True)
+            name.set_ellipsize(Pango.EllipsizeMode.END)
+            name.set_tooltip_text(ev['title'])
+            name.add_css_class('event-name')
+            toggle = Gtk.Button(label="✓")
+            toggle.add_css_class('done-toggle')
+            toggle.add_css_class('done-toggle-active' if done else 'done-toggle-inactive')
+            toggle.connect("clicked", self._on_task_toggle, ev)
+            row.append(dot)
+            row.append(name)
+            row.append(toggle)
+        else:
+            # Event row: accent dot + title
+            dot = Gtk.Label(label="•")
+            dot.add_css_class('event-dot')
+            name = Gtk.Label(label=ev)
+            name.set_ellipsize(Pango.EllipsizeMode.END)
+            name.set_tooltip_text(ev)
+            name.add_css_class('event-name')
+            row.append(dot)
+            row.append(name)
+
+        return row
+
     def _update_day_panel(self, date):
         # Update heading
         if date == self.today:
@@ -553,41 +592,14 @@ class CalendarPopup(Gtk.ApplicationWindow):
                 break
             self.events_box.remove(child)
 
+        # Sort order: undone tasks (0) → done tasks (1) → events (2)
         day_events = sorted(
             self.events.get(date.isoformat(), []),
             key=lambda e: 0 if (isinstance(e, dict) and not e.get('done')) else (1 if isinstance(e, dict) else 2)
         )
         if day_events:
             for ev in day_events:
-                row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
-                if isinstance(ev, dict):
-                    done = ev.get('done', False)
-                    dot = Gtk.Label(label="•")
-                    dot.add_css_class('done-dot' if done else 'task-dot')
-                    name = Gtk.Label(label=ev['title'])
-                    name.set_halign(Gtk.Align.START)
-                    name.set_hexpand(True)
-                    name.set_ellipsize(Pango.EllipsizeMode.END)
-                    name.set_tooltip_text(ev['title'])
-                    name.add_css_class('event-name')
-                    toggle = Gtk.Button(label="✓")
-                    toggle.add_css_class('done-toggle')
-                    toggle.add_css_class('done-toggle-active' if done else 'done-toggle-inactive')
-                    toggle.connect("clicked", self._on_task_toggle, ev)
-                    row.append(dot)
-                    row.append(name)
-                    row.append(toggle)
-                else:
-                    dot = Gtk.Label(label="•")
-                    dot.add_css_class('event-dot')
-                    name = Gtk.Label(label=ev)
-                    name.set_halign(Gtk.Align.START)
-                    name.set_ellipsize(Pango.EllipsizeMode.END)
-                    name.set_tooltip_text(ev)
-                    name.add_css_class('event-name')
-                    row.append(dot)
-                    row.append(name)
-                self.events_box.append(row)
+                self.events_box.append(self._make_event_row(ev))
         else:
             empty = Gtk.Label(label="No events")
             empty.add_css_class('no-events')
@@ -640,6 +652,8 @@ class CalendarPopup(Gtk.ApplicationWindow):
         threading.Thread(target=do_toggle, daemon=True).start()
 
     def _draw_refresh_icon(self, da, ctx, width, height):
+        """Cairo draw callback. Renders the Nerd Font refresh glyph, rotated when spinning.
+        Uses ink extents for pixel-perfect centering regardless of font metrics."""
         r, g, b = self._refresh_fg
 
         if not hasattr(self, '_refresh_layout'):
@@ -886,14 +900,15 @@ class CalendarPopup(Gtk.ApplicationWindow):
       }}
       .setup-icon {{
           font-family: "{NERD_FONT}";
-          font-size: 36px;
+          font-size: 32px;
           color: {hex_to_rgba(accent, 0.8)};
-          margin-bottom: 8px;
+          margin-bottom: 4px;
       }}
       .setup-title {{
           font-size: 14px;
           font-weight: bold;
           color: {fg};
+          margin-top: 8px;
           margin-bottom: 6px;
       }}
       .setup-msg {{

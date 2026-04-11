@@ -13,5 +13,5 @@ fi
 if systemctl --user is-enabled waybar-ycal.service &>/dev/null; then
     systemctl --user start waybar-ycal.service
 else
-    /usr/bin/python3 "$HOME/.config/waybar-ycal/popup.py" &
+    python3 "$HOME/.config/waybar-ycal/popup.py" &
 fi
