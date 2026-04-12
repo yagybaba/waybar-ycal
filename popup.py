@@ -181,6 +181,32 @@ def load_events():
     return {}
 
 
+class ClickShield(Gtk.Window):
+    """Transparent fullscreen window that catches clicks outside the popup.
+    Must use CSS background: transparent (not set_opacity) — compositors skip
+    input delivery on surfaces with Wayland alpha == 0.
+    """
+    def __init__(self, app, on_click):
+        super().__init__(application=app)
+        self.set_decorated(False)
+        self.add_css_class('click-shield')
+        Gtk4LayerShell.init_for_window(self)
+        Gtk4LayerShell.set_layer(self, Gtk4LayerShell.Layer.TOP)
+        for edge in [Gtk4LayerShell.Edge.TOP, Gtk4LayerShell.Edge.BOTTOM,
+                     Gtk4LayerShell.Edge.LEFT, Gtk4LayerShell.Edge.RIGHT]:
+            Gtk4LayerShell.set_anchor(self, edge, True)
+        Gtk4LayerShell.set_exclusive_zone(self, -1)
+        Gtk4LayerShell.set_keyboard_mode(self, Gtk4LayerShell.KeyboardMode.NONE)
+        box = Gtk.Box()
+        box.set_hexpand(True)
+        box.set_vexpand(True)
+        self.set_child(box)
+        gesture = Gtk.GestureClick()
+        gesture.connect('pressed', lambda *_: on_click())
+        box.add_controller(gesture)
+        self.set_visible(False)
+
+
 class CalendarPopup(Gtk.ApplicationWindow):
     def __init__(self, app):
         super().__init__(application=app)
@@ -194,6 +220,7 @@ class CalendarPopup(Gtk.ApplicationWindow):
         self.events = load_events()
         self._selected_btn = None
         self._cred_poll_timer = None
+        self._shield = ClickShield(app, self._hide)
 
         self._setup_window()
         self._apply_css()  # sets self._refresh_fg
@@ -205,15 +232,12 @@ class CalendarPopup(Gtk.ApplicationWindow):
         self.connect("close-request", lambda *_: self._hide())
 
         Gtk4LayerShell.init_for_window(self)
-        Gtk4LayerShell.set_layer(self, Gtk4LayerShell.Layer.TOP)
+        Gtk4LayerShell.set_layer(self, Gtk4LayerShell.Layer.OVERLAY)
         Gtk4LayerShell.set_anchor(self, Gtk4LayerShell.Edge.TOP, True)
         Gtk4LayerShell.set_anchor(self, Gtk4LayerShell.Edge.LEFT, False)
         Gtk4LayerShell.set_anchor(self, Gtk4LayerShell.Edge.RIGHT, False)
         Gtk4LayerShell.set_margin(self, Gtk4LayerShell.Edge.TOP, 4)
         Gtk4LayerShell.set_keyboard_mode(self, Gtk4LayerShell.KeyboardMode.ON_DEMAND)
-
-        self._hide_timer = None
-        self.connect('notify::is-active', self._on_active_changed)
 
         self.set_visible(False)
 
@@ -225,6 +249,7 @@ class CalendarPopup(Gtk.ApplicationWindow):
 
     def _show(self):
         self._apply_css()
+        self._shield.present()
         if not os.path.exists(CREDENTIALS_FILE):
             self._show_setup_screen('no_credentials')
             self.present()
@@ -313,7 +338,6 @@ class CalendarPopup(Gtk.ApplicationWindow):
             auth_btn.connect("clicked", self._on_auth_clicked)
             box.append(auth_btn)
 
-        self._setup_box = box
         self.set_child(box)
 
     def _on_open_console_clicked(self, btn):
@@ -342,22 +366,12 @@ class CalendarPopup(Gtk.ApplicationWindow):
                 GLib.idle_add(after_err)
         threading.Thread(target=do_auth, daemon=True).start()
 
-    def _on_active_changed(self, win, _):
-        if win.is_active():
-            if self._hide_timer:
-                GLib.source_remove(self._hide_timer)
-                self._hide_timer = None
-        else:
-            if self._hide_timer is None:
-                self._hide_timer = GLib.timeout_add(150, self._hide)
-
     def _hide(self):
-        self._hide_timer = None
+        self._shield.set_visible(False)
         if self._cred_poll_timer is not None:
             GLib.source_remove(self._cred_poll_timer)
             self._cred_poll_timer = None
         self.set_visible(False)
-        return False
 
     def _build_ui(self):
         # Outer horizontal box: calendar left, day panel right
@@ -730,6 +744,9 @@ class CalendarPopup(Gtk.ApplicationWindow):
       window {{
           background: transparent;
       }}
+      .click-shield {{
+          background: rgba(0, 0, 0, 0.01);
+      }}
       .popup-bg {{
           background: {hex_to_rgba(bg, 0.92)};
           border-radius: 12px;
@@ -897,12 +914,6 @@ class CalendarPopup(Gtk.ApplicationWindow):
       }}
       .pulsing {{
           animation: pulse 0.6s ease-in-out infinite;
-      }}
-      .setup-icon {{
-          font-family: "{NERD_FONT}";
-          font-size: 32px;
-          color: {hex_to_rgba(accent, 0.8)};
-          margin-bottom: 4px;
       }}
       .setup-title {{
           font-size: 14px;
