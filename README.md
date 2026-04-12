@@ -6,7 +6,7 @@ A Google Calendar + Google Tasks popup widget for [Waybar](https://github.com/Al
 *With [Omarchy](https://github.com/basecamp/omarchy) theme:*
 ![waybar-ycal omarchy](showcase2.png)
 
-- Click the bar module to open/close the popup
+- Click the bar module to open/close the popup — click anywhere outside to dismiss
 - Browse months, see events and tasks per day
 - Toggle tasks complete/incomplete inline
 - Auto-syncs every 15 minutes, manual refresh button available
