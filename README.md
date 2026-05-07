@@ -72,8 +72,9 @@ You need OAuth2 credentials from Google Cloud. This is a one-time setup.
    - Google Tasks API
 4. Go to **APIs & Services → Credentials → Create Credentials → OAuth client ID**
    - Application type: **Desktop app**
-   - After creating, go to the **Audience** tab (left sidebar) and add your Google account email under **Test users**
    - **Download the JSON from the confirmation dialog** — this is only available at creation time
+5. Go to **APIs & Services → OAuth consent screen → Audience** and set publishing status to **In production**
+   - No verification required for personal use — Google only requires review for sensitive/restricted scopes, which this app doesn't use
 6. Place the downloaded file at:
    ```
    ~/.config/waybar-ycal/credentials.json
@@ -129,7 +130,7 @@ Click the bar module to open the popup. It will detect that `credentials.json` i
 1. **No credentials** — click **Open Google Cloud Console**, download and place the JSON file. The popup detects the file automatically and advances.
 2. **Not authenticated** — click **Authenticate**, log in through the browser. The popup fetches your calendars and tasks and opens automatically.
 
-The token is saved to `~/.cache/waybar-ycal/token.json` and refreshed silently when it expires.
+The token is saved to `~/.cache/waybar-ycal/token.json` and refreshed silently in the background.
 
 ---
 
